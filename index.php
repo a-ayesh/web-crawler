@@ -24,9 +24,14 @@ $xpath = new DOMXPath($dom);
 
 // Query for the node containing the weekend title
 $weekendTitleNode = $xpath->query('/html/body/div[2]/main/div/div[3]/section/div/div[1]/div/div[2]/div');
-$firstItem = $weekendTitleNode->item(0);
+$weekendTitle = $weekendTitleNode->item(0)->nodeValue;
+echo $weekendTitle . "\n";
 
-// Must equal 'Weekend of November 24-26'
-echo $firstItem->nodeValue;
+// Query for the node containing the movie titles
+for ($i = 1; $i <= 10; $i++) {
+    $movieTitleNode = $xpath->query("/html/body/div[2]/main/div/div[3]/section/div/div[2]/div/ul/li[$i]/div[2]/div/div/div/a/h3");
+    $movieTitle = $movieTitleNode->item(0)->nodeValue;
+    echo $movieTitle . "\n";
+}
 
 ?>
