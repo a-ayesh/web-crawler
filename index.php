@@ -1,10 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Crawler</title>
+</head>
+<body>
 <?php
-
 // Ignore harmless error messages
 libxml_use_internal_errors(true);
 
+// Defining queue data structure
+class Queue {
+    private $queue;
+
+    public function __construct() {
+        $this->queue = [];
+    }
+
+    public function enqueue($item) {
+        array_push($this->queue, $item);
+    }
+
+    public function dequeue() {
+        if (!$this->isEmpty()) {
+            return array_shift($this->queue);
+        }
+        return null; // or throw an exception for an empty queue
+    }
+
+    public function peek() {
+        if (!$this->isEmpty()) {
+            return $this->queue[0];
+        }
+        return null; // or throw an exception for an empty queue
+    }
+
+    public function isEmpty() {
+        return empty($this->queue);
+    }
+
+    public function size() {
+        return count($this->queue);
+    }
+}
+
 $curl = curl_init();
 $userAgent = 'GitHubBot';
+$urlQueue = new Queue();
 
 // Get robots.txt file from github
 curl_setopt_array($curl, [
@@ -24,9 +67,9 @@ $robotRules = explode("Disallow: ", $robotsTxtContent);
 
 
 // Start crawling from the trending page
-$url = 'https://github.com/trending';
+$urlQueue->enqueue('https://github.com/trending');
 curl_setopt_array($curl, [
-    CURLOPT_URL => $url,
+    CURLOPT_URL => $urlQueue->dequeue(),
     CURLOPT_CUSTOMREQUEST => 'GET',
     CURLOPT_USERAGENT => $userAgent,
     CURLOPT_TIMEOUT => 30,
@@ -37,32 +80,21 @@ curl_setopt_array($curl, [
 $response = curl_exec($curl);
 $dom = new DOMDocument();
 $dom->loadHTML($response);
-//echo $response;
 
 // Create a DOMXPath object to query the DOM for all anchor tags
 $xpath = new DOMXPath($dom);
 $links = $xpath->query('//a');
 foreach ($links as $link) {
     $href = $link->getAttribute('href');
-    
-    if ($href[0] == '/') {
+
+    if (str_starts_with($href, '/')) {
         $href = 'https://github.com' . $href;
     }
-    
-    echo $href . "\n"; 
-}
 
-// // Query for the node containing the weekend title
-// $weekendTitleNode = $xpath->query('/html/body/div[2]/main/div/div[3]/section/div/div[1]/div/div[2]/div');
-// $weekendTitle = $weekendTitleNode->item(0)->nodeValue;
-// echo $weekendTitle . "\n";
+    $urlQueue->enqueue($href);
+} 
 
-// // Query for the node containing the movie titles
-// for ($i = 1; $i <= 10; $i++) {
-//     $movieTitleNode = $xpath->query("/html/body/div[2]/main/div/div[3]/section/div/div[2]/div/ul/li[$i]/div[2]/div/div/div/a/h3");
-//     $movieTitle = $movieTitleNode->item(0)->nodeValue;
-//     echo $movieTitle . "\n";
-// }
 curl_close($curl);
-
 ?>
+</body>
+</html>
