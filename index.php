@@ -32,11 +32,8 @@ if (session_status() == PHP_SESSION_NONE) {
     // Ignore harmless error messages
     libxml_use_internal_errors(true);
 
-    // Connecting to the database
-    $mysqli = new mysqli('localhost', 'root', '', 'web_crawler');
-    if ($mysqli->connect_error) {
-        die('Connection failed: ' . $mysqli->connect_error);
-    }
+    // Load data from the database
+    $data = json_decode(file_get_contents('data.json'), true);
 
     // Defining queue data structure
     class Queue
@@ -90,10 +87,21 @@ if (session_status() == PHP_SESSION_NONE) {
     $response;
     $curl = curl_init();
 
-    $sqlQuery = $mysqli->execute_query("SELECT * FROM crawled_urls WHERE url = ? LIMIT 1", [$url]);
+    echo ("
+    <script>
+        document.getElementById('seedUrl').placeholder = '$url';
+    </script>
+    ");
+
+    // Check if the URL has already been crawled
+    if ($data == null) {
+        $exists = false;
+    } else {
+        $exists = array_key_exists($url, $data);
+    }
 
     // If not already crawled, get robots.txt file from the respective website, else get it from the database
-    if ($sqlQuery->num_rows != 1) {
+    if (!$exists) {
         $parts = explode('/', $url);
         if (count($parts) >= 4) {
             $hostUrl = $parts[0] . '//' . $parts[2];
@@ -114,7 +122,7 @@ if (session_status() == PHP_SESSION_NONE) {
         $robotsTxtContent = str_replace("\n", '', $robotsTxtContent);
         $robotsTxtContent = str_replace('*', $userAgent, $robotsTxtContent);
     } else {
-        $robotsTxtContent = $sqlQuery->fetch_assoc()['robot'];
+        $robotsTxtContent = $data[$url]['robot'];
     }
 
     $robotRules = explode("Disallow: ", $robotsTxtContent);
@@ -127,10 +135,8 @@ if (session_status() == PHP_SESSION_NONE) {
         }
     }
 
-    $sqlQuery = $mysqli->execute_query("SELECT * FROM crawled_urls WHERE url = ? LIMIT 1", [$url]);
-
     // If not already crawled, start crawling from the provided page, else get the content from the database
-    if ($sqlQuery->num_rows != 1) {
+    if (!$exists) {
         curl_setopt_array($curl, [
             CURLOPT_URL => $url,
             CURLOPT_CUSTOMREQUEST => 'GET',
@@ -140,19 +146,29 @@ if (session_status() == PHP_SESSION_NONE) {
         ]);
         $response = curl_exec($curl);
     } else {
-        $response = $sqlQuery->fetch_assoc()['content'];
+        $response = $data[$url]['content'];
     }
 
     // Parse the HTML content
     $dom = new DOMDocument();
+    if (empty($response)) {
+        echo "<h2 class = 'col-12 text-center mb-3'>Error: HTML content is empty</h2>";
+        exit();
+    }
     $dom->loadHTML($response);
 
     // Store the crawled URL in the database if not already present
-    if ($sqlQuery->num_rows != 1) {
-        $urlToStore = mysqli_real_escape_string($mysqli, $url);
-        $contentToStore = mysqli_real_escape_string($mysqli, $response);
-        $rulesToStore = mysqli_real_escape_string($mysqli, $robotsTxtContent);
-        $mysqli->query("INSERT INTO crawled_urls (url, robot, content) VALUES ('$url', '$rulesToStore', '$contentToStore')");
+    if (!$exists) {
+        $urlToStore = $url;
+        $contentToStore = $response;
+        $rulesToStore = $robotsTxtContent;
+
+        $data[$urlToStore] = [
+            'url' => $urlToStore,
+            'robot' => $robotsTxtContent,
+            'content' => $contentToStore
+        ];
+        file_put_contents('data.json', json_encode($data, JSON_PRETTY_PRINT));
     }
 
     // Create a DOMXPath object to query the DOM for all anchor tags
@@ -186,7 +202,7 @@ if (session_status() == PHP_SESSION_NONE) {
             <div id='search' class='col-4 text-end order-last'>
                 <form action='index.php' method='post'>
                     <div class='input-group'>
-                        <input type='text' id='stringSearch' name='stringSearch' class='form-control' placeholder='Search'>
+                        <input type='text' id='stringSearch' name='stringSearch' class='form-control' placeholder='Filter'>
                         <button type='submit' class='btn btn-outline-secondary searchBtn'>
                             <svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='currentColor' class='bi bi-search' viewBox='0 0 16 16'>
                                 <path d='M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0'/>
@@ -197,9 +213,8 @@ if (session_status() == PHP_SESSION_NONE) {
             </div>
     ");
 
-    // Clone urlQueue for outputting and waste away the first element (not a hyperlink)
-    $temp = clone $urlQueue;
-    $url = $temp->dequeue();
+    // Waste away the first element (not a hyperlink)
+    $url = $urlQueue->dequeue();
     $linkCount = 0;
     $output = '';
 
@@ -210,18 +225,18 @@ if (session_status() == PHP_SESSION_NONE) {
     // Display links containing the search string, if provided
     echo "<div id = 'linksHeader' class = 'col-8 order-first'>";
     if ($str == null) {
-        $linkCount = $temp->size();
-        while (!($temp->isEmpty())) {
-            $url = $temp->dequeue();
-            $output = $output . "<li><a href=$url>$url</a></li>";
+        $linkCount = $urlQueue->size();
+        while (!($urlQueue->isEmpty())) {
+            $url = $urlQueue->dequeue();
+            $output = $output . "<li><form action='' method='post'><button type='submit' name='$url' value='$url'>$url</button></form></li>";
         }
         echo "<h4 class='mb-5 mt-1'>$linkCount Links found on this page:</h4>";
     } else {
-        while (!($temp->isEmpty())) {
-            $url = $temp->dequeue();
+        while (!($urlQueue->isEmpty())) {
+            $url = $urlQueue->dequeue();
             if (strpos($url, $str) !== false) {
                 $linkCount++;
-                $output = $output . "<li><a href=$url>$url</a></li>";
+                $output = $output . "<li><form action='index.php' method='post'><button type='submit' name='$url' value='$url'>$url</button></form></li>";
             }
         }
         echo "<h4 class='mb-5 mt-1'>$linkCount Links found on this page matching '$str':</h4>";
@@ -231,12 +246,23 @@ if (session_status() == PHP_SESSION_NONE) {
     </div>
     <div class='row'>
         <div id='links' class='col-12'>
-            <ul class='h6'>
+            <ul class='h6' id='anchor-buttons'>
                 $output
             </ul>
         </div>
     </div>
     </div>");
+
+    // Crawl the next URL if clicked.
+    if (!isset($_POST['stringSearch'])) {
+        $nextUrl = array_values($_POST);
+        foreach ($nextUrl as $temp) {
+            $_SESSION['url'] = $temp;
+            echo ("<script>location.href = location.href;</script>");
+        }
+    }
+
+    echo "<hr>";
 
     curl_close($curl);
     ?>
