@@ -27,6 +27,16 @@ hr {
     border-color: #161A30;
 }
 
+#anchor-buttons button {
+    background: none !important;
+    border: none;
+    padding: 0!important;
+    color: skyblue;
+    text-decoration: underline;
+    cursor: pointer;
+    text-align: left;
+  }
+
 /* 
 #161A30 primary
 #31304D secondary
