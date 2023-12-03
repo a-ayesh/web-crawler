@@ -1,3 +1,9 @@
+<?php
+if (session_status() == PHP_SESSION_NONE) {
+    session_start();
+}
+?>
+
 <!DOCTYPE html>
 <html lang="en">
 
@@ -25,6 +31,12 @@
     <?php
     // Ignore harmless error messages
     libxml_use_internal_errors(true);
+
+    // Connecting to the database
+    $mysqli = new mysqli('localhost', 'root', '', 'web_crawler');
+    if ($mysqli->connect_error) {
+        die('Connection failed: ' . $mysqli->connect_error);
+    }
 
     // Defining queue data structure
     class Queue
@@ -69,32 +81,42 @@
     }
 
     // Get the seed URL from the form. if not provided, use Google as the default
-    $url = (isset($_POST['seedUrl']) && $_POST['seedUrl'] != '') ? $_POST['seedUrl'] : 'https://www.google.com/';
+    $_SESSION['url'] = isset($_SESSION['url']) ? $_SESSION['url'] : 'https://www.google.com/';
+    $_SESSION['url'] = (isset($_POST['seedUrl']) && $_POST['seedUrl'] != '') ? $_POST['seedUrl'] : $_SESSION['url'];
+    $url = $_SESSION['url'];
     $userAgent = 'CrawlBot';
     $urlQueue = new Queue();
+    $robotsTxtContent;
+    $response;
     $curl = curl_init();
 
-    // Get robots.txt file from the respective website
-    $parts = explode('/', $url);
-    if (count($parts) >= 4) {
-        $hostUrl = $parts[0] . '//' . $parts[2];
-    } else {
-        echo "<h2 class = 'col-12 text-center mb-3'>Enter a valid URL</h2>";
-        exit();
-    }
-    curl_setopt_array($curl, [
-        CURLOPT_URL => "$hostUrl/robots.txt",
-        CURLOPT_CUSTOMREQUEST => 'GET',
-        CURLOPT_USERAGENT => $userAgent,
-        CURLOPT_TIMEOUT => 30,
-        CURLOPT_RETURNTRANSFER => true
-    ]);
+    $sqlQuery = $mysqli->execute_query("SELECT * FROM crawled_urls WHERE url = ? LIMIT 1", [$url]);
 
-    // Analyze and create an array of processed rules for the crawler to follow
-    $robotsTxtContent = curl_exec($curl);
-    $robotsTxtContent = str_replace('Allow: ', 'Disallow: ', $robotsTxtContent);
-    $robotsTxtContent = str_replace("\n", '', $robotsTxtContent);
-    $robotsTxtContent = str_replace('*', $userAgent, $robotsTxtContent);
+    // If not already crawled, get robots.txt file from the respective website, else get it from the database
+    if ($sqlQuery->num_rows != 1) {
+        $parts = explode('/', $url);
+        if (count($parts) >= 4) {
+            $hostUrl = $parts[0] . '//' . $parts[2];
+        } else {
+            echo "<h2 class = 'col-12 text-center mb-3'>Enter a valid URL</h2>";
+            exit();
+        }
+        curl_setopt_array($curl, [
+            CURLOPT_URL => "$hostUrl/robots.txt",
+            CURLOPT_CUSTOMREQUEST => 'GET',
+            CURLOPT_USERAGENT => $userAgent,
+            CURLOPT_TIMEOUT => 30,
+            CURLOPT_RETURNTRANSFER => true
+        ]);
+        // Analyze and create an array of processed rules for the crawler to follow
+        $robotsTxtContent = curl_exec($curl);
+        $robotsTxtContent = str_replace('Allow: ', 'Disallow: ', $robotsTxtContent);
+        $robotsTxtContent = str_replace("\n", '', $robotsTxtContent);
+        $robotsTxtContent = str_replace('*', $userAgent, $robotsTxtContent);
+    } else {
+        $robotsTxtContent = $sqlQuery->fetch_assoc()['robot'];
+    }
+
     $robotRules = explode("Disallow: ", $robotsTxtContent);
 
     // Basic check to see if the URL is allowed to be crawled
@@ -105,19 +127,33 @@
         }
     }
 
-    // Start crawling from the provided page
-    curl_setopt_array($curl, [
-        CURLOPT_URL => $url,
-        CURLOPT_CUSTOMREQUEST => 'GET',
-        CURLOPT_USERAGENT => $userAgent,
-        CURLOPT_TIMEOUT => 30,
-        CURLOPT_RETURNTRANSFER => true
-    ]);
+    $sqlQuery = $mysqli->execute_query("SELECT * FROM crawled_urls WHERE url = ? LIMIT 1", [$url]);
 
-    // Get the response and parse it into a DOM object
-    $response = curl_exec($curl);
+    // If not already crawled, start crawling from the provided page, else get the content from the database
+    if ($sqlQuery->num_rows != 1) {
+        curl_setopt_array($curl, [
+            CURLOPT_URL => $url,
+            CURLOPT_CUSTOMREQUEST => 'GET',
+            CURLOPT_USERAGENT => $userAgent,
+            CURLOPT_TIMEOUT => 30,
+            CURLOPT_RETURNTRANSFER => true
+        ]);
+        $response = curl_exec($curl);
+    } else {
+        $response = $sqlQuery->fetch_assoc()['content'];
+    }
+
+    // Parse the HTML content
     $dom = new DOMDocument();
     $dom->loadHTML($response);
+
+    // Store the crawled URL in the database if not already present
+    if ($sqlQuery->num_rows != 1) {
+        $urlToStore = mysqli_real_escape_string($mysqli, $url);
+        $contentToStore = mysqli_real_escape_string($mysqli, $response);
+        $rulesToStore = mysqli_real_escape_string($mysqli, $robotsTxtContent);
+        $mysqli->query("INSERT INTO crawled_urls (url, robot, content) VALUES ('$url', '$rulesToStore', '$contentToStore')");
+    }
 
     // Create a DOMXPath object to query the DOM for all anchor tags
     $xpath = new DOMXPath($dom);
@@ -126,6 +162,8 @@
         $href = $link->getAttribute('href');
 
         if (str_starts_with($href, '/')) {
+            $parts = explode('/', $url);
+            $hostUrl = $parts[0] . '//' . $parts[2];
             $href = "$hostUrl" . $href;
         }
 
