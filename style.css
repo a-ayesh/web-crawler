@@ -1,3 +1,7 @@
+* {
+    font-family: 'Consolas';
+}
+
 body {
     background-color: #31304D;
     color: #F0ECE5;
@@ -8,20 +12,16 @@ h1 {
     font-family: 'Press Start 2P';
 }
 
-h2, h3 {
-    font-family: 'Consolas';
-}
-
 hr {
     border: 2px dashed #F0ECE5;
 }
 
-#searchBtn {
+.searchBtn {
     color: white;
     border-color: white;
 }
 
-#searchBtn:hover {
+.searchBtn:hover {
     color: white;
     background-color: #161A30;
     border-color: #161A30;
