@@ -77,6 +77,11 @@ if (session_status() == PHP_SESSION_NONE) {
         }
     }
 
+    // Pagination
+    $current_page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
+    $links_per_page = 10;
+    $start_index = ($current_page - 1) * $links_per_page;
+
     // Get the seed URL from the form. if not provided, use Google as the default
     $_SESSION['url'] = isset($_SESSION['url']) ? $_SESSION['url'] : 'https://www.google.com/';
     $_SESSION['url'] = (isset($_POST['seedUrl']) && $_POST['seedUrl'] != '') ? $_POST['seedUrl'] : $_SESSION['url'];
@@ -103,7 +108,7 @@ if (session_status() == PHP_SESSION_NONE) {
     // If not already crawled, get robots.txt file from the respective website, else get it from the database
     if (!$exists) {
         $parts = explode('/', $url);
-        if (count($parts) >= 4) {
+        if (count($parts) >= 3) {
             $hostUrl = $parts[0] . '//' . $parts[2];
         } else {
             echo "<h2 class = 'col-12 text-center mb-3'>Enter a valid URL</h2>";
@@ -190,7 +195,7 @@ if (session_status() == PHP_SESSION_NONE) {
     $metaDescriptionElement = $xpath->query('//meta[@name="description"]/@content')->item(0);
     $metaDescription = ($metaDescriptionElement) ? $metaDescriptionElement->nodeValue : 'Meta description not found';
     echo "<h2 class = 'col-12 text-center mb-3'>$metaDescription<h2>";
-    echo "<hr>";
+    echo "<hr class='separator'>";
     $titleElement = $xpath->query('//title')->item(0);
     $title = ($titleElement) ? $titleElement->nodeValue : 'Title not found';
     echo "<h3 class = 'col-12 text-center mb-3'>$title<h3>";
@@ -221,22 +226,154 @@ if (session_status() == PHP_SESSION_NONE) {
     // Check if a search string was provided
     $str = isset($_POST['stringSearch']) ? $_POST['stringSearch'] : null;
     $str = strtolower($str);
-
-    // Display links containing the search string, if provided
+    $displayCounter = 0; // Keeps track of the number of links displayed
+    
+    // Display links containing the search string, if provided, else display all links
     echo "<div id = 'linksHeader' class = 'col-8 order-first'>";
     if ($str == null) {
         $linkCount = $urlQueue->size();
         while (!($urlQueue->isEmpty())) {
+            // get the next URL from the queue and crawl it, then display its contents
             $url = $urlQueue->dequeue();
-            $output = $output . "<li><form action='' method='post'><button type='submit' name='$url' value='$url'>$url</button></form></li>";
+            $exists = array_key_exists($url, $data);
+            if (!$exists) {
+                curl_setopt_array($curl, [
+                    CURLOPT_URL => $url,
+                    CURLOPT_CUSTOMREQUEST => 'GET',
+                    CURLOPT_USERAGENT => $userAgent,
+                    CURLOPT_TIMEOUT => 30,
+                    CURLOPT_RETURNTRANSFER => true
+                ]);
+                $response = curl_exec($curl);
+            } else {
+                $response = $data[$url]['content'];
+            }
+            // Parse the HTML content
+            $dom = new DOMDocument();
+            if (empty($response)) {
+                $response = "<h2 class = 'col-12 text-center mb-3'>Error: HTML content is empty</h2>";
+            }
+            $dom->loadHTML($response);
+            // store the crawled URL in the database if not already present
+            if (!$exists) {
+                $urlToStore = $url;
+                $contentToStore = $response;
+                $rulesToStore = $robotsTxtContent;
+
+                $data[$urlToStore] = [
+                    'url' => $urlToStore,
+                    'robot' => $robotsTxtContent,
+                    'content' => $contentToStore
+                ];
+                file_put_contents('data.json', json_encode($data, JSON_PRETTY_PRINT));
+            }
+            $xpath = new DOMXPath($dom);
+            $titleElement = $xpath->query('//title')->item(0);
+            $title = ($titleElement) ? $titleElement->nodeValue : 'Crawling not allowed on this URL or HTML content is empty';
+            $para = '';
+            if (strpos($title, 'Moved')) {
+                $title = 'Crawling not allowed on this URL or HTML content is empty';
+            }
+            if (!strpos($title, 'Crawling not allowed on this URL or HTML content is empty')) {
+                $paraElement = $xpath->query('//p')->item(0);
+                $para = ($paraElement) ? $paraElement->nodeValue : 'No content found';
+            }
+            if ($displayCounter >= $start_index && $displayCounter < ($start_index + $links_per_page)) {
+                $output = ($output . "<li'>
+                                        <h5>$title</h5>
+                                        <form action='' method='post' class='mb-3'>
+                                            <button type='submit' name='$url' value='$url'>$url</button>
+                                        </form>
+                                        <h6>$para</h6>
+                                    </li>
+                                    <hr>"
+                );
+            }
+            $displayCounter++;
         }
         echo "<h4 class='mb-5 mt-1'>$linkCount Links found on this page:</h4>";
     } else {
         while (!($urlQueue->isEmpty())) {
+            // get the next URL from the queue and crawl it, then display its contents
             $url = $urlQueue->dequeue();
-            if (strpos($url, $str) !== false) {
-                $linkCount++;
-                $output = $output . "<li><form action='index.php' method='post'><button type='submit' name='$url' value='$url'>$url</button></form></li>";
+            $exists = array_key_exists($url, $data);
+            if (!$exists) {
+                curl_setopt_array($curl, [
+                    CURLOPT_URL => $url,
+                    CURLOPT_CUSTOMREQUEST => 'GET',
+                    CURLOPT_USERAGENT => $userAgent,
+                    CURLOPT_TIMEOUT => 30,
+                    CURLOPT_RETURNTRANSFER => true
+                ]);
+                $response = curl_exec($curl);
+            } else {
+                $response = $data[$url]['content'];
+            }
+            // Parse the HTML content
+            $dom = new DOMDocument();
+            if (empty($response)) {
+                $response = "<h2 class = 'col-12 text-center mb-3'>Error: HTML content is empty</h2>";
+            }
+            $dom->loadHTML($response);
+            // store the crawled URL in the database if not already present
+            if (!$exists) {
+                $urlToStore = $url;
+                $contentToStore = $response;
+                $rulesToStore = $robotsTxtContent;
+
+                $data[$urlToStore] = [
+                    'url' => $urlToStore,
+                    'robot' => $robotsTxtContent,
+                    'content' => $contentToStore
+                ];
+                file_put_contents('data.json', json_encode($data, JSON_PRETTY_PRINT));
+            }
+            $xpath = new DOMXPath($dom);
+            $titleElement = $xpath->query('//title')->item(0);
+            $title = ($titleElement) ? $titleElement->nodeValue : 'Crawling not allowed on this URL or HTML content is empty';
+            $para = '';
+            if (strpos($title, 'Moved')) {
+                $title = 'Crawling not allowed on this URL or HTML content is empty';
+            }
+            if (!strpos($title, 'Crawling not allowed on this URL or HTML content is empty')) {
+                $paraElement = $xpath->query('//p');
+                if ($paraElement) {
+                    foreach ($paraElement as $p) {
+                        $para = $p->nodeValue;
+                        if (strpos($para, $str) !== false) {
+                            $linkCount++;
+                            if ($displayCounter >= $start_index && $displayCounter < ($start_index + $links_per_page)) {
+                                $output = ($output . "<li'>
+                                                        <h5>$title</h5>
+                                                        <form action='' method='post' class='mb-3'>
+                                                            <button type='submit' name='$url' value='$url'>$url</button>
+                                                        </form>
+                                                        <h6>$para</h6>
+                                                    </li>
+                                                    <hr>"
+                                );
+                            }
+                        }
+                    }
+                } else {
+                    $para = "No content found";
+                    if ($displayCounter >= $start_index && $displayCounter < ($start_index + $links_per_page)) {
+                        $output = ($output . "<li'>
+                                                <h5>$title</h5>
+                                                <form action='' method='post' class='mb-3'>
+                                                    <button type='submit' name='$url' value='$url'>$url</button>
+                                                </form>
+                                                <h6>$para</h6>
+                                            </li>
+                                            <hr>"
+                        );
+                    }
+                }
+                $displayCounter++;
+                if (strpos($url, $str) !== false) {
+                    $linkCount++;
+                    $output = $output . "<li><form action='index.php' method='post'><button type='submit' name='$url' value='$url'>$url</button></form></li>";
+                }
             }
         }
         echo "<h4 class='mb-5 mt-1'>$linkCount Links found on this page matching '$str':</h4>";
@@ -251,7 +388,21 @@ if (session_status() == PHP_SESSION_NONE) {
             </ul>
         </div>
     </div>
-    </div>");
+    <div class='row'>
+        <div class='pagination col-6'>");
+
+    $total_pages = ceil($linkCount / $links_per_page);
+    $end_index = min($start_index + $links_per_page, $linkCount);
+
+    for ($i = 1; $i <= $total_pages; $i++) {
+        $active_class = ($i == $current_page) ? 'active' : '';
+        echo "<a class='page-link $active_class' href='?page=$i'>$i</a>";
+    }
+    echo (
+        "</div>
+        <div class='info col-6 text-end'>Displaying links " . $start_index + 1 . " to $end_index out of $linkCount</div>
+    </div></div>"
+    );
 
     // Crawl the next URL if clicked.
     if (!isset($_POST['stringSearch'])) {
@@ -262,7 +413,7 @@ if (session_status() == PHP_SESSION_NONE) {
         }
     }
 
-    echo "<hr>";
+    echo "<hr class='separator'>";
 
     curl_close($curl);
     ?>
